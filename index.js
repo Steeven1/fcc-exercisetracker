@@ -5,6 +5,11 @@ require("dotenv").config();
 
 const mongoose = require("mongoose");
 
+app.use((req, res, next) => {
+  console.warn(`[${req.method}] ${req.path}`);
+  next();
+});
+
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -14,11 +19,11 @@ const userSchema = mongoose.Schema({
 });
 
 const exerciseSchemas = mongoose.Schema({
-  username: { type: String, required: true },
-  description: { type: String, required: true },
-  duration: { type: Number, required: true },
-  date: { type: String, required: true },
-  user_id: { type: String, required: true },
+  username: { type: String },
+  description: { type: String },
+  duration: { type: Number },
+  date: { type: Date },
+  user_id: { type: String },
 });
 
 const User = mongoose.model("User", userSchema);
@@ -30,6 +35,12 @@ app.get("/", (req, res) => {
   res.sendFile(__dirname + "/views/index.html");
 });
 
+app.use(express.json());
+app.use(
+  express.urlencoded({
+    extended: false,
+  }),
+);
 app.post("/api/users", (req, res) => {
   const user = new User({ username: req.body.username });
   user
@@ -62,12 +73,19 @@ app.post("/api/users/:_id/exercises", (req, res) => {
         username,
         description,
         duration,
-        date: date ? new Date(date).toDateString() : new Date().toDateString(),
+        date: date ? new Date(date) : new Date(),
         user_id: user._id,
       });
       newExercise
         .save()
         .then((data) => {
+          console.info({
+            _id: user._id,
+            username: user.username,
+            date: new Date(newExercise.date).toDateString(),
+            duration: newExercise.duration,
+            description: newExercise.description,
+          });
           res.json({
             _id: user._id,
             username: user.username,
@@ -89,44 +107,61 @@ app.post("/api/users/:_id/exercises", (req, res) => {
     );
 });
 
-app.get("/api/users/:_id/logs", async (req, res) => {
+app.get("/api/users/:_id/logs", (req, res) => {
   let from = req.query.from;
   let to = req.query.to;
+  console.log(`${from} ${to}`);
   let limit = req.query.limit;
   let id = req.params._id;
-  let user = await User.findById(id);
-  if (!user) {
-    res.json({ error: "not found user" });
-  }
-  let dateObj = {};
-  if (from) {
-    dateObj["$gte"] = new Date(from);
-  }
-  if (to) {
-    dateObj["$lte"] = new Date(to);
-  }
+  User.findById(id).then((user) => {
+    if (!user) {
+      res.json({ error: "not found user" });
+    }
+    let dateObj = {};
+    if (from) {
+      dateObj["$gte"] = new Date(from);
+    }
+    if (to) {
+      dateObj["$lte"] = new Date(to);
+    }
 
-  let filter = {
-    user_id: id,
-  };
+    let filter = {
+      user_id: id,
+    };
 
-  if (from || to) {
-    filter.date = dateObj;
-  }
+    if (from || to) {
+      filter.date = dateObj;
+    }
 
-  let exercises = await Exercise.find(filter)
-    .limit(+limit ?? 500)
-    .select("description duration date -_id")
-    .lean();
-
-  res.json({
-    username: user.username,
-    count: exercises.length,
-    _id: user._id,
-    log: exercises.map((e) => ({
-      ...e,
-      date: e.date,
-    })),
+    Exercise.find(filter)
+      .limit(parseInt(limit))
+      .select("description duration date -_id")
+      .exec()
+      .then((exercise) => {
+        let log = exercise.map((e) => ({
+          description: e.description,
+          duration: e.duration,
+          date: new Date(e.date).toDateString(),
+        }));
+        /* mongoose.connection
+          .dropDatabase("exercise_tracker")
+          .then((data) => console.log("dropped database"))
+          .catch((error) =>
+            console.log({ error: "error al borrar base de datos" }),
+          ); */
+        console.info({
+          _id: user._id,
+          username: user.username,
+          count: exercise.length,
+          log,
+        });
+        res.json({
+          _id: user._id,
+          username: user.username,
+          count: exercise.length,
+          log,
+        });
+      });
   });
 });
 
